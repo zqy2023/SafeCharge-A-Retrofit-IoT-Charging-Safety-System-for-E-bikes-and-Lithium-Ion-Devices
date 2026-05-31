@@ -1,0 +1,1528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafeCharge Dashboard</title>
+<script src="/static/js/socket.io.min.js"></script>
+<script src="/static/js/chart.min.js"></script>
+<style>
+/* ── Variables (warm palette from classmate's design) ───────────────────────── */
+:root {
+  --bg:       #f4efe6;
+  --panel:    rgba(255,251,245,0.92);
+  --panel-2:  rgba(255,253,250,0.96);
+  --line:     #d4c5b5;
+  --line-2:   rgba(212,197,181,0.5);
+  --ink:      #1d2a2f;
+  --muted:    #56636a;
+  --faint:    #8fa0a8;
+
+  --accent:   #ca5b2e;   /* coral – fault/alert  */
+  --accent-2: #1f7a8c;   /* teal  – info/action  */
+  --ok:       #2f7d4b;   /* forest green – normal */
+  --warn-clr: #d97706;   /* amber – warning       */
+  --red:      #b44b32;   /* red-orange – fault    */
+  --blue:     #2563a8;   /* steel blue             */
+
+  --ok-dim:   rgba(47,125,75,.12);
+  --warn-dim: rgba(217,119,6,.12);
+  --red-dim:  rgba(180,75,50,.12);
+  --blue-dim: rgba(37,99,168,.12);
+  --teal-dim: rgba(31,122,140,.12);
+
+  --shadow:   0 20px 50px rgba(55,42,24,.12);
+  --shadow-s: 0 4px 16px rgba(55,42,24,.08);
+  --radius:   20px;
+  --radius-s: 12px;
+  --sidebar-w: 210px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  font-family: "Segoe UI", "PingFang SC", system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left,  rgba(202,91,46,.14),  transparent 30%),
+    radial-gradient(circle at bottom right, rgba(31,122,140,.16), transparent 26%),
+    linear-gradient(135deg, #f6f0e7, #eaf0ee);
+  background-attachment: fixed;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Sidebar ────────────────────────────────────────────────────────────────── */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 100vh;
+  backdrop-filter: blur(16px);
+  box-shadow: 2px 0 20px rgba(55,42,24,.06);
+}
+
+.logo { padding: 20px 18px 16px; border-bottom: 1px solid var(--line-2); }
+.logo-name { font-size: 15px; font-weight: 800; letter-spacing: -.3px; color: var(--ink); }
+.logo-sub  { font-size: 11px; color: var(--faint); margin-top: 3px; }
+.logo-badge {
+  display: inline-block; margin-top: 6px;
+  padding: 2px 8px; border-radius: 999px;
+  background: rgba(202,91,46,.12); color: var(--accent);
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+}
+
+nav { flex: 1; padding: 10px 10px; display: flex; flex-direction: column; gap: 2px; }
+
+.nav-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: 10px;
+  cursor: pointer; color: var(--muted);
+  font-size: 13px; font-weight: 500;
+  transition: background .14s, color .14s;
+  user-select: none;
+}
+.nav-item:hover  { background: rgba(31,122,140,.08); color: var(--ink); }
+.nav-item.active { background: rgba(31,122,140,.14); color: var(--accent-2); font-weight: 700; }
+.nav-item svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+.sidebar-footer {
+  padding: 14px 16px;
+  border-top: 1px solid var(--line-2);
+  font-size: 11px;
+}
+.conn-row { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--faint); flex-shrink: 0;
+  transition: background .4s;
+}
+.dot.online  { background: var(--ok);   animation: pulse-g 2s infinite; }
+.dot.warning { background: var(--warn-clr); }
+.dot.fault   { background: var(--red);  animation: pulse-r 1s infinite; }
+#last-seen { color: var(--faint); margin-top: 4px; }
+
+@keyframes pulse-g { 0%,100%{box-shadow:0 0 0 0 rgba(47,125,75,.5)} 50%{box-shadow:0 0 0 4px rgba(47,125,75,0)} }
+@keyframes pulse-r { 0%,100%{box-shadow:0 0 0 0 rgba(180,75,50,.6)} 50%{box-shadow:0 0 0 5px rgba(180,75,50,0)} }
+
+/* ── Main area ──────────────────────────────────────────────────────────────── */
+.main { flex: 1; overflow-y: auto; height: 100vh; scroll-behavior: smooth; }
+.tab-pane { display: none; padding: 24px 26px 36px; }
+.tab-pane.active { display: block; }
+
+/* ── Section header ─────────────────────────────────────────────────────────── */
+.ph { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; }
+.ph-title { font-size: 18px; font-weight: 800; letter-spacing: -.3px; color: var(--ink); }
+.ph-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ── Hero section (Overview) ────────────────────────────────────────────────── */
+.hero {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 18px;
+  margin-bottom: 18px;
+  align-items: stretch;
+}
+@media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+
+.hero-left {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  padding: 24px 26px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.hero-eyebrow {
+  font-size: 0.75rem; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--accent);
+  margin-bottom: 8px;
+}
+.hero-title { font-size: clamp(1.8rem,2.5vw,2.8rem); font-weight: 900; line-height: 1.05; color: var(--ink); }
+.hero-sub   { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
+
+/* State badge in hero */
+.state-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-top: 20px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 14px; font-weight: 800;
+  letter-spacing: .02em;
+  transition: all .35s;
+  width: fit-content;
+}
+.state-badge .badge-dot { width: 9px; height: 9px; border-radius: 50%; }
+.sb-normal  { background:var(--ok-dim);   border-color:rgba(47,125,75,.3);   color:var(--ok);   }
+.sb-warning { background:var(--warn-dim); border-color:rgba(217,119,6,.35);  color:var(--warn-clr); animation: glow-y 2.5s ease-in-out infinite; }
+.sb-fault,
+.sb-latched { background:var(--red-dim);  border-color:rgba(180,75,50,.4);   color:var(--red);  animation: glow-r 1.2s ease-in-out infinite; }
+.sb-manual  { background:var(--teal-dim); border-color:rgba(31,122,140,.35); color:var(--accent-2); }
+
+.sb-normal  .badge-dot { background:var(--ok); }
+.sb-warning .badge-dot { background:var(--warn-clr); }
+.sb-fault   .badge-dot,
+.sb-latched .badge-dot { background:var(--red); }
+.sb-manual  .badge-dot { background:var(--accent-2); }
+
+@keyframes glow-y { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 14px rgba(217,119,6,.22)} }
+@keyframes glow-r { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 18px rgba(180,75,50,.28)} }
+
+.hero-actions { display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; }
+.btn {
+  padding: 10px 20px; border: none; border-radius: 999px;
+  font: inherit; font-size: 13px; font-weight: 700;
+  cursor: pointer; transition: transform .18s, opacity .18s, box-shadow .18s;
+}
+.btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(55,42,24,.18); }
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .35; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-primary  { background: var(--accent);   color: #fff; }
+.btn-secondary{ background: var(--accent-2); color: #fff; }
+.btn-ghost    { background: rgba(31,122,140,.1); color: var(--accent-2); border: 1px solid rgba(31,122,140,.3); }
+.btn-danger   { background: var(--red); color: #fff; }
+
+/* ── Status card (classmate's style) ─────────────────────────────────────────── */
+.status-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  padding: 22px;
+}
+.sc-title { font-size: 13px; font-weight: 700; color: var(--muted);
+            text-transform: uppercase; letter-spacing: .06em; margin-bottom: 14px; }
+.sc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.sc-item {
+  background: rgba(244,239,230,.7);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-s);
+  padding: 14px 15px;
+  transition: border-color .3s, background .3s;
+}
+.sc-item.warn  { border-color: rgba(217,119,6,.5);  background: rgba(217,119,6,.07); }
+.sc-item.fault { border-color: rgba(180,75,50,.5);  background: rgba(180,75,50,.07); }
+.sc-label { font-size: 10px; font-weight: 700; color: var(--muted);
+            text-transform: uppercase; letter-spacing: .06em; margin-bottom: 5px; }
+.sc-value { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums;
+            line-height: 1; color: var(--ink); }
+.sc-unit  { font-size: 11px; color: var(--faint); margin-top: 2px; }
+.sc-trend { font-size: 10px; margin-top: 3px; }
+.trend-up   { color: var(--red); }
+.trend-down { color: var(--accent-2); }
+.trend-flat { color: var(--faint); }
+
+/* INA219 offline indicator */
+.ina-badge {
+  display: inline-block; font-size: 9px; padding: 1px 6px;
+  border-radius: 999px; font-weight: 700; margin-left: 4px;
+  vertical-align: middle;
+}
+.ina-ok  { background: var(--ok-dim);  color: var(--ok); }
+.ina-off { background: var(--red-dim); color: var(--red); }
+
+/* ── Mini status row (relay + smoke + energy) ────────────────────────────────── */
+.srow { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 18px; }
+.scard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-s);
+  padding: 14px 16px;
+  display: flex; align-items: center; gap: 12px;
+  backdrop-filter: blur(8px);
+}
+.scard-icon {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+}
+.icon-ok  { background: var(--ok-dim); }
+.icon-bad { background: var(--red-dim); }
+.scard-label { font-size: 10px; color: var(--muted);
+               text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+.scard-value { font-size: 14px; font-weight: 700; }
+.c-ok   { color: var(--ok); }
+.c-bad  { color: var(--red); }
+.c-warn { color: var(--warn-clr); }
+.c-teal { color: var(--accent-2); }
+
+/* ── Chart cards ─────────────────────────────────────────────────────────────── */
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+@media (max-width: 880px) { .chart-grid { grid-template-columns: 1fr; } }
+.ccrd {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-s);
+  padding: 14px 16px;
+  backdrop-filter: blur(8px);
+}
+.ccrd-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.ccrd-title { font-size:11px; font-weight:700; color:var(--muted);
+              text-transform:uppercase; letter-spacing:.05em; }
+.chart-wrap { height: 200px; position: relative; }
+
+/* ── History charts ──────────────────────────────────────────────────────────── */
+.hist-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-s);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  backdrop-filter: blur(8px);
+}
+.hist-label { font-size:11px; font-weight:700; color:var(--muted);
+              text-transform:uppercase; letter-spacing:.05em; margin-bottom:10px; }
+.hist-wrap { height: 240px; position: relative; }
+
+/* ── Events table ────────────────────────────────────────────────────────────── */
+.tcard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+}
+.tcard-head {
+  padding: 14px 18px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--line-2);
+}
+.tcard-title { font-size: 14px; font-weight: 800; }
+table { width: 100%; border-collapse: collapse; }
+thead th {
+  text-align: left; font-size: 10px; font-weight: 700; color: var(--faint);
+  text-transform: uppercase; letter-spacing: .06em;
+  padding: 9px 16px; border-bottom: 1px solid var(--line-2);
+  background: rgba(244,239,230,.5);
+}
+tbody td {
+  padding: 10px 16px; font-size: 12px; color: var(--muted);
+  border-bottom: 1px solid var(--line-2);
+}
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: rgba(31,122,140,.04); }
+
+.badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+}
+.b-warn     { background: var(--warn-dim); color: var(--warn-clr); }
+.b-fault    { background: var(--red-dim);  color: var(--red); }
+.b-info     { background: var(--teal-dim); color: var(--accent-2); }
+.b-recovery { background: var(--ok-dim);   color: var(--ok); }
+
+/* ── Range / filter buttons ──────────────────────────────────────────────────── */
+.btn-group { display: flex; gap: 5px; }
+.tbtn {
+  font-size: 11px; padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent;
+  color: var(--muted); cursor: pointer; font: inherit;
+  transition: all .14s;
+}
+.tbtn:hover, .tbtn.active {
+  background: rgba(31,122,140,.12); color: var(--accent-2);
+  border-color: rgba(31,122,140,.4);
+}
+
+/* ── Settings ────────────────────────────────────────────────────────────────── */
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 700px) { .settings-grid { grid-template-columns: 1fr; } }
+
+.set-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+  backdrop-filter: blur(12px);
+}
+.set-title { font-size: 14px; font-weight: 800; margin-bottom: 14px; color: var(--ink); }
+.set-section-label {
+  font-size: 10px; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: .08em;
+  margin: 14px 0 8px;
+}
+.frow {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0; border-bottom: 1px solid var(--line-2);
+}
+.frow:last-of-type { border-bottom: none; }
+.flabel { font-size: 12px; color: var(--muted); }
+.finput {
+  width: 88px; background: #fffdfa;
+  border: 1px solid var(--line); border-radius: 10px;
+  color: var(--ink); font: inherit; font-size: 12px;
+  padding: 5px 10px; text-align: right; outline: none;
+  transition: border-color .15s;
+}
+.finput:focus { border-color: var(--accent-2); }
+
+.info-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+.info-table td { padding: 8px 0; font-size: 12px; border-bottom: 1px solid var(--line-2); }
+.info-table td:first-child { color: var(--muted); }
+.info-table td:last-child  { color: var(--ink); font-weight: 600; text-align: right; }
+.info-table tr:last-child td { border-bottom: none; }
+
+.tip {
+  background: rgba(31,122,140,.06);
+  border: 1px solid rgba(31,122,140,.18);
+  border-radius: 10px;
+  padding: 10px 13px; font-size: 11px; color: var(--muted); line-height: 1.65;
+  margin-bottom: 10px;
+}
+.tip code { color: var(--accent-2); font-family: monospace; }
+
+.empty { text-align: center; color: var(--faint); padding: 28px 16px; font-style: italic; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Multi-device responsive upgrade: desktop / tablet / mobile
+   Added by ChatGPT for SafeCharge
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  --bottom-nav-h: 76px;
+}
+
+.mobile-bottom-nav { display: none; }
+
+/* Make desktop overview fill the page better */
+@media (min-width: 1100px) {
+  .tab-pane { min-height: 100vh; }
+  #tab-overview {
+    display: none;
+  }
+  #tab-overview.active {
+    display: flex;
+    flex-direction: column;
+  }
+  #tab-overview .chart-grid {
+    flex: 1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  #tab-overview .ccrd {
+    min-height: 250px;
+  }
+  #tab-overview .chart-wrap {
+    height: 245px;
+  }
+}
+
+/* Tablet */
+@media (max-width: 1024px) {
+  body {
+    overflow: auto;
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .srow,
+  .chart-grid,
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tab-pane {
+    padding: 20px;
+  }
+
+  .chart-wrap {
+    height: 220px;
+  }
+}
+
+/* Mobile-first dashboard experience */
+@media (max-width: 768px) {
+  html, body {
+    width: 100%;
+    min-height: 100%;
+    height: auto;
+    overflow-x: hidden;
+  }
+
+  body {
+    display: block;
+    background:
+      radial-gradient(circle at 20% 0%, rgba(31,122,140,.12), transparent 30%),
+      radial-gradient(circle at 100% 18%, rgba(202,91,46,.10), transparent 28%),
+      linear-gradient(180deg, #fbfaf6 0%, #eef4f3 100%);
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid rgba(212,197,181,.65);
+    background: rgba(255,251,245,.86);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 8px 28px rgba(55,42,24,.08);
+  }
+
+  .logo {
+    padding: 14px 18px 10px;
+    border-bottom: 0;
+  }
+
+  .logo-name {
+    font-size: 20px;
+    letter-spacing: -.5px;
+  }
+
+  .logo-sub {
+    margin-top: 4px;
+    font-size: 12px;
+  }
+
+  .logo-badge {
+    font-size: 10px;
+    padding: 3px 9px;
+  }
+
+  .sidebar nav {
+    display: none;
+  }
+
+  .sidebar-footer {
+    display: none;
+  }
+
+  .main {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .tab-pane {
+    padding: 16px 14px calc(var(--bottom-nav-h) + 18px);
+  }
+
+  .ph {
+    margin-bottom: 14px;
+  }
+
+  .ph-title {
+    font-size: 24px;
+    line-height: 1.1;
+  }
+
+  .ph-sub {
+    font-size: 12px;
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
+  .hero-left,
+  .status-card,
+  .ccrd,
+  .hist-card,
+  .tcard,
+  .set-card,
+  .scard {
+    border-radius: 22px;
+    box-shadow: 0 14px 34px rgba(55,42,24,.09);
+  }
+
+  .hero-left {
+    padding: 20px;
+  }
+
+  .hero-eyebrow {
+    font-size: 10px;
+  }
+
+  .hero-title {
+    font-size: 34px;
+  }
+
+  .hero-sub {
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .state-badge {
+    margin-top: 18px;
+    font-size: 15px;
+    padding: 10px 16px;
+  }
+
+  .hero-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  .hero-actions .btn {
+    width: 100%;
+    min-height: 46px;
+    padding: 10px 12px;
+    border-radius: 16px;
+    font-size: 13px;
+  }
+
+  .hero-actions .btn-ghost {
+    grid-column: 1 / -1;
+  }
+
+  .status-card {
+    padding: 18px;
+  }
+
+  .sc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .sc-item {
+    min-height: 106px;
+    padding: 13px;
+    border-radius: 18px;
+  }
+
+  .sc-value {
+    font-size: 21px;
+  }
+
+  .srow {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .scard {
+    padding: 14px;
+  }
+
+  .chart-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .ccrd {
+    padding: 14px;
+  }
+
+  .chart-wrap {
+    height: 190px;
+  }
+
+  .hist-wrap {
+    height: 210px;
+  }
+
+  .btn-group {
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .tbtn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .frow {
+    gap: 12px;
+  }
+
+  .finput {
+    width: 96px;
+  }
+
+  .tcard {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tcard table {
+    min-width: 640px;
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    z-index: 300;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    height: 62px;
+    padding: 7px;
+    border: 1px solid rgba(212,197,181,.72);
+    border-radius: 24px;
+    background: rgba(255,253,250,.9);
+    backdrop-filter: blur(20px);
+    box-shadow: 0 18px 44px rgba(55,42,24,.18);
+  }
+
+  .mobile-bottom-nav .nav-item {
+    justify-content: center;
+    flex-direction: column;
+    gap: 3px;
+    padding: 7px 4px;
+    border-radius: 18px;
+    font-size: 10px;
+    text-align: center;
+  }
+
+  .mobile-bottom-nav .nav-item svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* Narrow phone */
+@media (max-width: 430px) {
+  .tab-pane {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .hero-title {
+    font-size: 30px;
+  }
+
+  .sc-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-wrap {
+    height: 175px;
+  }
+}
+
+</style>
+</head>
+<body>
+
+<!-- ══ SIDEBAR ══════════════════════════════════════════════════════════════════ -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-name">⚡ SafeCharge</div>
+    <div class="logo-sub">ELEC5518 · Group 8</div>
+    <div class="logo-badge">ESP32-S3 + INA219</div>
+  </div>
+
+  <nav>
+    <div class="nav-item active" data-tab="overview">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.5A1.5 1.5 0 012.5 1h3A1.5 1.5 0 017 2.5v3A1.5 1.5 0 015.5 7h-3A1.5 1.5 0 011 5.5v-3zm8 0A1.5 1.5 0 0110.5 1h3A1.5 1.5 0 0115 2.5v3A1.5 1.5 0 0113.5 7h-3A1.5 1.5 0 019 5.5v-3zm-8 8A1.5 1.5 0 012.5 9h3A1.5 1.5 0 017 10.5v3A1.5 1.5 0 015.5 15h-3A1.5 1.5 0 011 13.5v-3zm8 0A1.5 1.5 0 0110.5 9h3A1.5 1.5 0 0115 10.5v3A1.5 1.5 0 0113.5 15h-3A1.5 1.5 0 019 13.5v-3z"/></svg>
+      Overview
+    </div>
+    <div class="nav-item" data-tab="history">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 2a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1V2zm0 5a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1V7zm0 5a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1v-2z"/></svg>
+      History
+    </div>
+    <div class="nav-item" data-tab="events">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 16A8 8 0 108 0a8 8 0 000 16zm.93-9.412l-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 110-2 1 1 0 010 2z"/></svg>
+      Events
+    </div>
+    <div class="nav-item" data-tab="settings">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.183.5.29.417.278.97.319 1.395.028l.94-.613c.092-.06.18-.04.237.016.389.397.73.843 1.013 1.329.049.086.051.181-.002.268l-.663 1.001c-.308.465-.308 1.056.004 1.555.084.138.159.28.224.425.23.532.757.87 1.327.87h1.131c.108 0 .17.067.19.146a6.62 6.62 0 010 1.142c-.02.08-.082.146-.19.146H14.48c-.57 0-1.097.338-1.327.87a4.63 4.63 0 01-.224.425c-.312.499-.312 1.09-.004 1.555l.663 1.001c.053.087.051.182.002.268a6.574 6.574 0 01-1.013 1.329c-.057.057-.145.076-.237.016l-.94-.613c-.424-.291-.978-.25-1.395.028-.159.107-.326.204-.5.29-.447.222-.85.629-.997 1.189l-.289 1.105c-.029.11-.101.143-.137.146a6.593 6.593 0 01-1.142 0c-.036-.003-.108-.036-.137-.146l-.289-1.105c-.147-.56-.55-.967-.997-1.189a4.645 4.645 0 01-.5-.29c-.417-.278-.97-.319-1.395-.028l-.94.613c-.092.06-.18.04-.237-.016A6.574 6.574 0 011.92 12.83c-.049-.086-.051-.181.002-.268l.663-1.001c.308-.465.308-1.056-.004-1.555a4.634 4.634 0 01-.224-.425C2.127 9.049 1.6 8.711 1.03 8.711H-.1c-.108 0-.17-.066-.19-.146a6.621 6.621 0 010-1.142c.02-.08.082-.146.19-.146H1.03c.57 0 1.097-.338 1.327-.87.065-.145.14-.287.224-.425.312-.499.312-1.09.004-1.555L1.922 3.426c-.053-.087-.051-.182-.002-.268A6.574 6.574 0 012.933 1.83c.057-.057.145-.076.237-.016l.94.613c.424.291.978.25 1.395-.028.159-.107.326-.204.5-.29.447-.222.85-.629.997-1.189l.289-1.105c.029-.11.101-.143.137-.146zM8 11a3 3 0 110-6 3 3 0 010 6z"/></svg>
+      Settings
+    </div>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="conn-row">
+      <div class="dot" id="conn-dot"></div>
+      <span id="conn-text">Waiting…</span>
+    </div>
+    <div id="last-seen">No data received</div>
+  </div>
+</aside>
+
+<!-- ══ MAIN ══════════════════════════════════════════════════════════════════════ -->
+<main class="main">
+
+  <!-- ── Overview ──────────────────────────────────────────────────────────── -->
+  <section class="tab-pane active" id="tab-overview">
+    <div class="ph">
+      <div><div class="ph-title">Overview</div><div class="ph-sub">Real-time e-bike charging monitor</div></div>
+    </div>
+
+    <!-- Hero: state + quick actions | sensor status card -->
+    <div class="hero">
+      <div class="hero-left">
+        <div>
+          <p class="hero-eyebrow">ESP32-S3 · ACS712 · INA219 · DHT11</p>
+          <h1 class="hero-title">SafeCharge<br>Monitor</h1>
+          <p class="hero-sub">
+            Multi-sensor safety gateway for residential e-bike charging.
+            Monitors DC current, DC voltage &amp; power, temperature, and smoke in real time.
+          </p>
+        </div>
+        <div>
+          <div class="state-badge sb-normal" id="state-badge">
+            <span class="badge-dot"></span>
+            <span id="sb-state-text">NORMAL</span>
+          </div>
+          <div id="sb-desc" style="font-size:11px;color:var(--muted);margin-top:8px;">
+            All sensors within limits
+          </div>
+          <div class="hero-actions">
+            <button class="btn btn-danger"   id="btn-cut"     onclick="cutPower()">⏻ Cut Charging</button>
+            <button class="btn btn-secondary" id="btn-restore" onclick="sendReset()">↺ Restore Charging</button>
+            <button class="btn btn-ghost"    onclick="loadHistory('1h', null); showTab('history')">View History</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Status card (classmate's style with our sensors) -->
+      <div class="status-card">
+        <div class="sc-title">
+          Live Readings
+          <span class="ina-badge ina-ok" id="ina-badge">INA219 OK</span>
+        </div>
+        <div class="sc-grid">
+          <div class="sc-item" id="sci-i">
+            <div class="sc-label">DC Current</div>
+            <div class="sc-value" id="v-current">—</div>
+            <div class="sc-unit">Amperes (INA219)</div>
+            <div class="sc-trend" id="tr-current">—</div>
+          </div>
+          <div class="sc-item" id="sci-v">
+            <div class="sc-label">DC Voltage</div>
+            <div class="sc-value" id="v-dc-v">—</div>
+            <div class="sc-unit">Volts (INA219)</div>
+            <div class="sc-trend" id="tr-dc-v">—</div>
+          </div>
+          <div class="sc-item" id="sci-p">
+            <div class="sc-label">DC Power</div>
+            <div class="sc-value" id="v-dc-p">—</div>
+            <div class="sc-unit">Watts (INA219)</div>
+            <div class="sc-trend" id="tr-dc-p">—</div>
+          </div>
+          <div class="sc-item" id="sci-t">
+            <div class="sc-label">Temperature</div>
+            <div class="sc-value" id="v-temp">—</div>
+            <div class="sc-unit">°C (DHT11)</div>
+            <div class="sc-trend" id="tr-temp">—</div>
+          </div>
+          <div class="sc-item" id="sci-h">
+            <div class="sc-label">Humidity</div>
+            <div class="sc-value" id="v-hum">—</div>
+            <div class="sc-unit">% RH (DHT11)</div>
+            <div class="sc-trend" id="tr-hum">—</div>
+          </div>
+          <div class="sc-item" id="sci-s">
+            <div class="sc-label">Smoke</div>
+            <div class="sc-value" id="v-smoke-main">—</div>
+            <div class="sc-unit">ADC raw</div>
+            <div class="sc-trend" id="tr-smoke">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Energy status row -->
+    <div class="srow">
+      <div class="scard">
+        <div class="scard-icon icon-ok" style="background:rgba(31,122,140,.12)">⚡</div>
+        <div>
+          <div class="scard-label">Energy (session)</div>
+          <div class="scard-value c-teal" id="v-energy">0.000 Wh</div>
+          <div style="font-size:10px;color:var(--faint);margin-top:2px">∫ P·dt since page load</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live charts -->
+    <div class="chart-grid">
+      <div class="ccrd">
+        <div class="ccrd-head">
+          <span class="ccrd-title">DC Current (A) · Live</span>
+          <span style="font-size:10px;color:var(--faint)">60 pts</span>
+        </div>
+        <div class="chart-wrap"><canvas id="ch-live-i"></canvas></div>
+      </div>
+      <div class="ccrd">
+        <div class="ccrd-head">
+          <span class="ccrd-title">DC Voltage (V) · Live</span>
+          <span style="font-size:10px;color:var(--faint)">60 pts</span>
+        </div>
+        <div class="chart-wrap"><canvas id="ch-live-v"></canvas></div>
+      </div>
+      <div class="ccrd">
+        <div class="ccrd-head">
+          <span class="ccrd-title">DC Power (W) · Live</span>
+          <span style="font-size:10px;color:var(--faint)">60 pts</span>
+        </div>
+        <div class="chart-wrap"><canvas id="ch-live-p"></canvas></div>
+      </div>
+      <div class="ccrd">
+        <div class="ccrd-head">
+          <span class="ccrd-title">Temperature (°C) · Live</span>
+          <span style="font-size:10px;color:var(--faint)">60 pts</span>
+        </div>
+        <div class="chart-wrap"><canvas id="ch-live-t"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── History ────────────────────────────────────────────────────────────── -->
+  <section class="tab-pane" id="tab-history">
+    <div class="ph">
+      <div><div class="ph-title">History</div><div class="ph-sub">Historical sensor data</div></div>
+      <div class="btn-group" id="range-btns">
+        <button class="tbtn active" onclick="loadHistory('1h',this)">1 h</button>
+        <button class="tbtn" onclick="loadHistory('6h',this)">6 h</button>
+        <button class="tbtn" onclick="loadHistory('24h',this)">24 h</button>
+        <button class="tbtn" onclick="loadHistory('7d',this)">7 d</button>
+      </div>
+    </div>
+    <div class="hist-card">
+      <div class="hist-label">DC Current (A)</div>
+      <div class="hist-wrap"><canvas id="ch-hist-i"></canvas></div>
+    </div>
+    <div class="hist-card">
+      <div class="hist-label">DC Voltage (V)</div>
+      <div class="hist-wrap"><canvas id="ch-hist-v"></canvas></div>
+    </div>
+    <div class="hist-card">
+      <div class="hist-label">DC Power (W)</div>
+      <div class="hist-wrap"><canvas id="ch-hist-p"></canvas></div>
+    </div>
+    <div class="hist-card">
+      <div class="hist-label">Temperature (°C)</div>
+      <div class="hist-wrap"><canvas id="ch-hist-t"></canvas></div>
+    </div>
+    <div class="hist-card">
+      <div class="hist-label">Humidity (%)</div>
+      <div class="hist-wrap"><canvas id="ch-hist-h"></canvas></div>
+    </div>
+  </section>
+
+  <!-- ── Events ─────────────────────────────────────────────────────────────── -->
+  <section class="tab-pane" id="tab-events">
+    <div class="ph">
+      <div><div class="ph-title">Events</div><div class="ph-sub">Alert and state-change log</div></div>
+      <div class="btn-group">
+        <button class="tbtn active" onclick="filterEvt('all',this)">All</button>
+        <button class="tbtn" onclick="filterEvt('WARNING',this)">Warning</button>
+        <button class="tbtn" onclick="filterEvt('FAULT',this)">Fault</button>
+        <button class="tbtn" onclick="filterEvt('RECOVERY',this)">Recovery</button>
+      </div>
+    </div>
+    <div class="tcard">
+      <table>
+        <thead><tr><th>Time</th><th>Type</th><th>Description</th><th>Action</th></tr></thead>
+        <tbody id="evt-tbody">
+          <tr><td colspan="4" class="empty">No events recorded</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Settings ───────────────────────────────────────────────────────────── -->
+  <section class="tab-pane" id="tab-settings">
+    <div class="ph">
+      <div><div class="ph-title">Settings</div><div class="ph-sub">Safety thresholds and device info</div></div>
+    </div>
+    <div class="settings-grid">
+      <div class="set-card">
+        <div class="set-title">Safety Thresholds</div>
+
+        <div class="set-section-label">DC Line (INA219)</div>
+        <div class="frow"><span class="flabel">Current warning (A)</span><input class="finput" type="number" step="0.1" id="thr-cw"></div>
+        <div class="frow"><span class="flabel">Current fault (A)</span><input class="finput" type="number" step="0.1" id="thr-cf"></div>
+
+        <div class="set-section-label">Temperature (DHT11)</div>
+        <div class="frow"><span class="flabel">Temp warning (°C)</span><input class="finput" type="number" step="0.5" id="thr-tw"></div>
+        <div class="frow"><span class="flabel">Temp fault (°C)</span><input class="finput" type="number" step="0.5" id="thr-tf"></div>
+
+        <div class="set-section-label">DC Bus (INA219)</div>
+        <div class="frow"><span class="flabel">DC voltage warning (V)</span><input class="finput" type="number" step="0.1" id="thr-dvw"></div>
+        <div class="frow"><span class="flabel">DC voltage fault (V)</span><input class="finput" type="number" step="0.1" id="thr-dvf"></div>
+        <div class="frow"><span class="flabel">DC power warning (W)</span><input class="finput" type="number" step="1" id="thr-dpw"></div>
+        <div class="frow"><span class="flabel">DC power fault (W)</span><input class="finput" type="number" step="1" id="thr-dpf"></div>
+
+        <button class="btn btn-secondary" id="btn-save-thr" onclick="saveThresholds()" style="margin-top:16px;width:100%;border-radius:12px">Save &amp; Push to ESP32</button>
+      </div>
+
+      <div class="set-card">
+        <div class="set-title">Device Info</div>
+        <table class="info-table">
+          <tr><td>ESP32 POST endpoint</td><td id="inf-ep">—</td></tr>
+          <tr><td>Connection</td><td id="inf-conn">Disconnected</td></tr>
+          <tr><td>Last reading</td><td id="inf-last">—</td></tr>
+          <tr><td>Readings (session)</td><td id="inf-cnt">0</td></tr>
+          <tr><td>INA219 status</td><td id="inf-ina">—</td></tr>
+        </table>
+        <div class="tip">
+          Set the POST URL in your ESP32 firmware (<code>wifi_config.h</code>) to:<br>
+          <code>http://&lt;your-ip&gt;:5050/api/data</code>
+        </div>
+        <button class="btn btn-danger" style="width:100%;border-radius:12px" onclick="sendReset()">Send RESET to ESP32</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Mobile bottom navigation -->
+<div class="mobile-bottom-nav" aria-label="Mobile navigation">
+  <div class="nav-item active" data-tab="overview">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.5A1.5 1.5 0 012.5 1h3A1.5 1.5 0 017 2.5v3A1.5 1.5 0 015.5 7h-3A1.5 1.5 0 011 5.5v-3zm8 0A1.5 1.5 0 0110.5 1h3A1.5 1.5 0 0115 2.5v3A1.5 1.5 0 0113.5 7h-3A1.5 1.5 0 019 5.5v-3zm-8 8A1.5 1.5 0 012.5 9h3A1.5 1.5 0 017 10.5v3A1.5 1.5 0 015.5 15h-3A1.5 1.5 0 011 13.5v-3zm8 0A1.5 1.5 0 0110.5 9h3A1.5 1.5 0 0115 10.5v3A1.5 1.5 0 0113.5 15h-3A1.5 1.5 0 019 13.5v-3z"/></svg>
+    Overview
+  </div>
+  <div class="nav-item" data-tab="history">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 2a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1V2zm0 5a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1V7zm0 5a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1v-2z"/></svg>
+    History
+  </div>
+  <div class="nav-item" data-tab="events">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 16A8 8 0 108 0a8 8 0 000 16zm.93-9.412l-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 110-2 1 1 0 010 2z"/></svg>
+    Events
+  </div>
+  <div class="nav-item" data-tab="settings">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.183.5.29.417.278.97.319 1.395.028l.94-.613c.092-.06.18-.04.237.016.389.397.73.843 1.013 1.329.049.086.051.181-.002.268l-.663 1.001c-.308.465-.308 1.056.004 1.555.084.138.159.28.224.425.23.532.757.87 1.327.87h1.131c.108 0 .17.067.19.146a6.62 6.62 0 010 1.142c-.02.08-.082.146-.19.146H14.48c-.57 0-1.097.338-1.327.87a4.63 4.63 0 01-.224.425c-.312.499-.312 1.09-.004 1.555l.663 1.001c.053.087.051.182.002.268a6.574 6.574 0 01-1.013 1.329c-.057.057-.145.076-.237.016l-.94-.613c-.424-.291-.978-.25-1.395.028-.159.107-.326.204-.5.29-.447.222-.85.629-.997 1.189l-.289 1.105c-.029.11-.101.143-.137.146a6.593 6.593 0 01-1.142 0c-.036-.003-.108-.036-.137-.146l-.289-1.105c-.147-.56-.55-.967-.997-1.189a4.645 4.645 0 01-.5-.29c-.417-.278-.97-.319-1.395-.028l-.94.613c-.092.06-.18.04-.237-.016A6.574 6.574 0 011.92 12.83c-.049-.086-.051-.181.002-.268l.663-1.001c.308-.465.308-1.056-.004-1.555a4.634 4.634 0 01-.224-.425C2.127 9.049 1.6 8.711 1.03 8.711H-.1c-.108 0-.17-.066-.19-.146a6.621 6.621 0 010-1.142c.02-.08.082-.146.19-.146H1.03c.57 0 1.097-.338 1.327-.87.065-.145.14-.287.224-.425.312-.499.312-1.09.004-1.555L1.922 3.426c-.053-.087-.051-.182-.002-.268A6.574 6.574 0 012.933 1.83c.057-.057.145-.076.237-.016l.94.613c.424.291.978.25 1.395-.028.159-.107.326-.204.5-.29.447-.222.85-.629.997-1.189l.289-1.105c.029-.11.101-.143.137-.146zM8 11a3 3 0 110-6 3 3 0 010 6z"/></svg>
+    Settings
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let prev = null, readCnt = 0, allEvt = [], activeFilter = 'all';
+let energyWh = 0, lastApplyMs = null;
+
+// ── Chart factory (adapted to warm light palette) ─────────────────────────────
+Chart.defaults.color       = '#56636a';
+Chart.defaults.borderColor = '#e8ddd0';
+
+function makeChart(id, color, unit, maxPts) {
+  const ctx = document.getElementById(id).getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 160);
+  g.addColorStop(0, color + '30'); g.addColorStop(1, color + '04');
+  return new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: [{ data: [], borderColor: color, backgroundColor: g,
+      borderWidth: 2, pointRadius: 0, tension: 0.38, fill: true }] },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(255,251,245,0.97)',
+          borderColor: '#d4c5b5', borderWidth: 1,
+          titleColor: '#56636a', bodyColor: '#1d2a2f',
+          callbacks: { label: c => (c.parsed.y != null ? c.parsed.y.toFixed(2) : '—') + ' ' + unit }
+        }
+      },
+      scales: {
+        x: { grid:{ color:'rgba(212,197,181,.35)' }, ticks:{ maxTicksLimit:5, font:{size:10} } },
+        y: { grid:{ color:'rgba(212,197,181,.35)' }, ticks:{ font:{size:10} } }
+      }
+    },
+    _max: maxPts
+  });
+}
+
+function parseTimestampToDate(timestamp) {
+  if (!timestamp) return new Date();
+
+  if (timestamp instanceof Date) {
+    return timestamp;
+  }
+
+  let s = String(timestamp).trim();
+
+  // If backend timestamp has no timezone, treat it as UTC, then display in Sydney time.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) &&
+      !/[zZ]$/.test(s) &&
+      !/[+-]\d{2}:\d{2}$/.test(s)) {
+    s += 'Z';
+  }
+
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
+function formatTimeLabel(timestamp) {
+  const d = parseTimestampToDate(timestamp);
+
+  return d.toLocaleTimeString('en-AU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: 'Australia/Sydney'
+  });
+}
+
+function formatAxisLabel(date, range = '1h') {
+  const d = parseTimestampToDate(date);
+
+  if (range === '7d') {
+    return d.toLocaleString('en-AU', {
+      weekday: 'short',
+      hour: '2-digit',
+      hour12: false,
+      timeZone: 'Australia/Sydney'
+    });
+  }
+
+  return d.toLocaleTimeString('en-AU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Australia/Sydney'
+  });
+}
+
+const RANGE_CONFIG = {
+  '1h':  { hours: 1,   stepMs: 1  * 60 * 1000 },
+  '6h':  { hours: 6,   stepMs: 5  * 60 * 1000 },
+  '24h': { hours: 24,  stepMs: 15 * 60 * 1000 },
+  '7d':  { hours: 168, stepMs: 2  * 60 * 60 * 1000 },
+};
+
+function buildUniformSeries(rows, range = '1h') {
+  const cfg = RANGE_CONFIG[range] || RANGE_CONFIG['1h'];
+  const now = Date.now();
+  const endMs = Math.floor(now / cfg.stepMs) * cfg.stepMs;
+  const startMs = endMs - cfg.hours * 60 * 60 * 1000;
+  const count = Math.floor((endMs - startMs) / cfg.stepMs) + 1;
+
+  const labels = Array.from({ length: count }, (_, i) =>
+    formatAxisLabel(new Date(startMs + i * cfg.stepMs), range)
+  );
+
+  const makeZeros = () => Array(count).fill(0);
+
+  const series = {
+    labels,
+    current: makeZeros(),
+    voltage: makeZeros(),
+    power: makeZeros(),
+    temp: makeZeros(),
+    hum: makeZeros(),
+    startMs,
+    endMs,
+    stepMs: cfg.stepMs,
+  };
+
+  (rows || []).forEach(r => {
+    const t = parseTimestampToDate(r.timestamp).getTime();
+    if (t < startMs || t > endMs) return;
+
+    const idx = Math.floor((t - startMs) / cfg.stepMs);
+    if (idx < 0 || idx >= count) return;
+
+    const put = (arr, val) => {
+      const n = Number(val);
+      arr[idx] = Number.isFinite(n) ? n : 0;
+    };
+
+    put(series.current, r.current_a ?? r.dc_current_a);
+    put(series.voltage, r.dc_voltage_v);
+    put(series.power, r.dc_power_w);
+    put(series.temp, r.temperature_c);
+    put(series.hum, r.humidity_pct);
+  });
+
+  return series;
+}
+
+let liveWindow = null;
+
+function setLiveWindowFromRows(rows) {
+  liveWindow = buildUniformSeries(rows || [], '1h');
+
+  setData(chLiveI, liveWindow.labels.slice(), liveWindow.current.slice());
+  setData(chLiveV, liveWindow.labels.slice(), liveWindow.voltage.slice());
+  setData(chLiveP, liveWindow.labels.slice(), liveWindow.power.slice());
+  setData(chLiveT, liveWindow.labels.slice(), liveWindow.temp.slice());
+}
+
+function ensureLiveWindow(timestamp) {
+  if (!liveWindow) {
+    setLiveWindowFromRows([]);
+  }
+
+  const t = parseTimestampToDate(timestamp).getTime();
+
+  while (t > liveWindow.endMs) {
+    liveWindow.startMs += liveWindow.stepMs;
+    liveWindow.endMs += liveWindow.stepMs;
+
+    const nextLabel = formatAxisLabel(new Date(liveWindow.endMs), '1h');
+
+    [chLiveI, chLiveV, chLiveP, chLiveT].forEach(ch => {
+      ch.data.labels.shift();
+      ch.data.labels.push(nextLabel);
+      ch.data.datasets[0].data.shift();
+      ch.data.datasets[0].data.push(0);
+      ch.update('none');
+    });
+  }
+
+  return t;
+}
+
+function updateFixedLiveChart(ch, value, timestamp) {
+  const t = ensureLiveWindow(timestamp);
+  if (t < liveWindow.startMs || t > liveWindow.endMs) return;
+
+  const idx = Math.floor((t - liveWindow.startMs) / liveWindow.stepMs);
+  const n = Number(value);
+
+  if (idx >= 0 && idx < ch.data.datasets[0].data.length) {
+    ch.data.datasets[0].data[idx] = Number.isFinite(n) ? n : 0;
+    ch.update('none');
+  }
+}
+
+function push(ch, lbl, val) {
+  ch.data.labels.push(lbl); ch.data.datasets[0].data.push(val);
+  if (ch.data.labels.length > ch._max) { ch.data.labels.shift(); ch.data.datasets[0].data.shift(); }
+  ch.update('none');
+}
+function setData(ch, labels, vals) { ch.data.labels = labels; ch.data.datasets[0].data = vals; ch.update(); }
+
+// Warm color palette for charts
+const chLiveI = makeChart('ch-live-i', '#ca5b2e', 'A',   60); // coral
+const chLiveV = makeChart('ch-live-v', '#1f7a8c', 'V',   60); // teal
+const chLiveP = makeChart('ch-live-p', '#b87333', 'W',   60); // bronze
+const chLiveT = makeChart('ch-live-t', '#2f7d4b', '°C',  60); // forest green
+const chHistI = makeChart('ch-hist-i', '#ca5b2e', 'A',  500);
+const chHistV = makeChart('ch-hist-v', '#1f7a8c', 'V',  500);
+const chHistP = makeChart('ch-hist-p', '#b87333', 'W',  500);
+const chHistT = makeChart('ch-hist-t', '#2f7d4b', '°C', 500);
+const chHistH = makeChart('ch-hist-h', '#4169a1', '%',  500);
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll(`[data-tab="${name}"]`).forEach(el => el.classList.add('active'));
+  const pane = document.getElementById('tab-' + name);
+  if (pane) pane.classList.add('active');
+}
+document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => {
+  const tab = el.dataset.tab;
+  showTab(tab);
+  if (tab === 'history') loadHistory('1h', document.querySelector('#range-btns .tbtn'));
+  if (tab === 'events')  fetchEvt();
+}));
+
+// ── State banner ──────────────────────────────────────────────────────────────
+const STATES = {
+  Normal:    { cls:'sb-normal',  lbl:'NORMAL',     desc:'All sensors within limits',             rst:false },
+  Warning:   { cls:'sb-warning', lbl:'WARNING',    desc:'Soft threshold exceeded – monitoring',  rst:false },
+  Fault:     { cls:'sb-fault',   lbl:'FAULT',      desc:'Relay disconnected – safety trip',      rst:true  },
+  Latched:   { cls:'sb-latched', lbl:'LATCHED',    desc:'Manual reset required',                 rst:true  },
+  ManualOff: { cls:'sb-manual',  lbl:'MANUAL OFF', desc:'Power cut manually – Reset to restore', rst:true  },
+};
+
+function applyState(state) {
+  const s = STATES[state] || STATES.Normal;
+  document.getElementById('state-badge').className = 'state-badge ' + s.cls;
+  document.getElementById('sb-state-text').textContent = s.lbl;
+  document.getElementById('sb-desc').textContent = s.desc;
+  document.getElementById('inf-conn').textContent = s.lbl;
+  document.getElementById('conn-dot').className =
+    'dot ' + (state === 'Normal' ? 'online' : state === 'Warning' ? 'warning' : 'fault');
+}
+
+// ── Trend helper ──────────────────────────────────────────────────────────────
+function trend(now, p, unit) {
+  if (p == null || now == null) return '';
+  const d = now - p;
+  if (Math.abs(d) < 0.005) return `<span class="trend-flat">→ stable</span>`;
+  const cls = d > 0 ? 'trend-up' : 'trend-down';
+  const arrow = d > 0 ? '↑' : '↓';
+  return `<span class="${cls}">${arrow} ${Math.abs(d).toFixed(2)} ${unit}</span>`;
+}
+
+// ── Live data update ──────────────────────────────────────────────────────────
+function apply(d) {
+  const ts = formatTimeLabel(d.timestamp);
+
+  // INA219 status must be defined before using it
+  const hasIna =
+    d.ina219_ok === true ||
+    d.ina219_ok === 1 ||
+    d.ina219_ok === "true";
+
+  // INA219 DC metrics
+  const I = d.current_a ?? d.dc_current_a;
+  const V = d.dc_voltage_v;
+  const P = d.dc_power_w;
+
+  // Temperature & Humidity
+  const T = d.temperature_c;
+  const H = d.humidity_pct;
+
+  // DC Current
+  document.getElementById('v-current').textContent =
+    hasIna && I != null ? Number(I).toFixed(3) + ' A' : '—';
+
+  document.getElementById('sci-i').className = 'sc-item' + (!hasIna ? '' :
+    (I > 3.5 ? ' fault' : I > 2.5 ? ' warn' : ''));
+
+  // Temperature & Humidity
+  document.getElementById('v-temp').textContent =
+    T != null ? Number(T).toFixed(1) + ' °C' : '—';
+
+  document.getElementById('v-hum').textContent =
+    H != null ? Number(H).toFixed(0) + ' %' : '—';
+
+  document.getElementById('sci-t').className =
+    'sc-item' + (T > 45 ? ' fault' : T > 38 ? ' warn' : '');
+
+  // DC Voltage / Power
+  document.getElementById('v-dc-v').textContent =
+    hasIna && V != null ? Number(V).toFixed(2) + ' V' : '—';
+
+  document.getElementById('v-dc-p').textContent =
+    hasIna && P != null ? Number(P).toFixed(3) + ' W' : '—';
+
+  document.getElementById('sci-v').className = 'sc-item' + (!hasIna ? '' :
+    (V > 14.8 || V < 9 ? ' fault' : V > 13.5 ? ' warn' : ''));
+
+  document.getElementById('sci-p').className = 'sc-item' + (!hasIna ? '' :
+    (P > 40 ? ' fault' : P > 25 ? ' warn' : ''));
+
+  // INA219 badge
+  const inaBadge = document.getElementById('ina-badge');
+  inaBadge.textContent = hasIna ? 'INA219 OK' : 'INA219 —';
+  inaBadge.className = 'ina-badge ' + (hasIna ? 'ina-ok' : 'ina-off');
+  document.getElementById('inf-ina').textContent = hasIna ? 'Online' : 'Offline / not fitted';
+
+  // Trends
+  if (prev) {
+    document.getElementById('tr-temp').innerHTML = trend(T, prev.temperature_c, '°C');
+    document.getElementById('tr-hum').innerHTML = trend(H, prev.humidity_pct, '%');
+
+    if (hasIna) {
+      document.getElementById('tr-current').innerHTML = trend(I, prev.current_a ?? prev.dc_current_a, 'A');
+      document.getElementById('tr-dc-v').innerHTML = trend(V, prev.dc_voltage_v, 'V');
+      document.getElementById('tr-dc-p').innerHTML = trend(P, prev.dc_power_w, 'W');
+    }
+  }
+
+  // Smoke raw is shown as the 6th Live Readings card.
+  const smokeRaw = d.smoke;
+  const smk = d.smoke_detected;
+  document.getElementById('v-smoke-main').textContent =
+    smokeRaw != null ? String(smokeRaw) : '—';
+
+  document.getElementById('sci-s').className =
+    'sc-item' + (smk ? ' fault' : '');
+
+  if (prev) {
+    document.getElementById('tr-smoke').innerHTML = trend(smokeRaw, prev.smoke, 'ADC');
+  }
+
+  applyState(d.state || 'Normal');
+
+  // Energy integral
+  const nowMs = Date.now();
+
+  if (lastApplyMs !== null && hasIna && P != null && P > 0) {
+    energyWh += P * ((nowMs - lastApplyMs) / 3600000);
+    document.getElementById('v-energy').textContent = energyWh.toFixed(3) + ' Wh';
+  }
+
+  lastApplyMs = nowMs;
+
+  // Overview live charts use a fixed 1-hour timeline.
+  updateFixedLiveChart(chLiveT, T, d.timestamp || Date.now());
+
+  if (hasIna) {
+    updateFixedLiveChart(chLiveI, I, d.timestamp || Date.now());
+    updateFixedLiveChart(chLiveV, V, d.timestamp || Date.now());
+    updateFixedLiveChart(chLiveP, P, d.timestamp || Date.now());
+  }
+
+  readCnt++;
+  document.getElementById('conn-text').textContent = 'Device online';
+  document.getElementById('last-seen').textContent = 'Updated ' + ts;
+  document.getElementById('inf-last').textContent = ts;
+  document.getElementById('inf-cnt').textContent = readCnt;
+
+  prev = d;
+}
+// ── Socket.IO ─────────────────────────────────────────────────────────────────
+const socket = io();
+socket.on('connect', () => {
+  document.getElementById('inf-ep').textContent =
+    window.location.origin.replace('localhost','<your-ip>') + '/api/data';
+});
+socket.on('disconnect', () => {
+  document.getElementById('conn-dot').className = 'dot';
+  document.getElementById('conn-text').textContent = 'Disconnected';
+});
+socket.on('sensor_update', d => {
+  apply(d);
+  if (document.getElementById('tab-events').classList.contains('active')) fetchEvt();
+});
+socket.on('thresholds_updated', t => {
+  document.getElementById('thr-cw').value  = t.current_warn;
+  document.getElementById('thr-cf').value  = t.current_fault;
+  document.getElementById('thr-tw').value  = t.temp_warn;
+  document.getElementById('thr-tf').value  = t.temp_fault;
+  document.getElementById('thr-dvw').value = t.dc_volt_warn   ?? 13.5;
+  document.getElementById('thr-dvf').value = t.dc_volt_fault  ?? 14.8;
+  document.getElementById('thr-dpw').value = t.dc_power_warn  ?? 25;
+  document.getElementById('thr-dpf').value = t.dc_power_fault ?? 40;
+});
+
+// ── History ───────────────────────────────────────────────────────────────────
+async function loadHistory(range, btn) {
+  document.querySelectorAll('#range-btns .tbtn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+
+  const rows = await fetch('/api/history?range=' + range).then(r => r.json());
+  const series = buildUniformSeries(rows || [], range);
+
+  // Uniform timeline: every bucket is fixed; missing buckets are filled with 0.
+  setData(chHistI, series.labels, series.current);
+  setData(chHistV, series.labels, series.voltage);
+  setData(chHistP, series.labels, series.power);
+  setData(chHistT, series.labels, series.temp);
+  setData(chHistH, series.labels, series.hum);
+}
+
+// ── Events ────────────────────────────────────────────────────────────────────
+const BDGE = {
+  WARNING:  '<span class="badge b-warn">Warning</span>',
+  FAULT:    '<span class="badge b-fault">Fault</span>',
+  INFO:     '<span class="badge b-info">Info</span>',
+  RECOVERY: '<span class="badge b-recovery">Recovery</span>',
+};
+async function fetchEvt() {
+  allEvt = await fetch('/api/events?limit=100').then(r => r.json());
+  renderEvt();
+}
+function renderEvt() {
+  const rows = activeFilter === 'all' ? allEvt : allEvt.filter(e => e.event_type === activeFilter);
+  const tb = document.getElementById('evt-tbody');
+  tb.innerHTML = rows.length ? rows.map(e => `
+    <tr>
+      <td>${(e.timestamp||'').slice(0,19).replace('T',' ')}</td>
+      <td>${BDGE[e.event_type] || e.event_type}</td>
+      <td style="color:var(--ink)">${e.description}</td>
+      <td>${e.action || '—'}</td>
+    </tr>`).join('') : '<tr><td colspan="4" class="empty">No events recorded</td></tr>';
+}
+function filterEvt(type, btn) {
+  activeFilter = type;
+  document.querySelectorAll('.btn-group .tbtn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderEvt();
+}
+
+// ── Thresholds ────────────────────────────────────────────────────────────────
+async function loadThr() {
+  const t = await fetch('/api/thresholds').then(r => r.json());
+  document.getElementById('thr-cw').value  = t.current_warn   ?? 2.5;
+  document.getElementById('thr-cf').value  = t.current_fault  ?? 3.5;
+  document.getElementById('thr-tw').value  = t.temp_warn      ?? 38;
+  document.getElementById('thr-tf').value  = t.temp_fault     ?? 45;
+  document.getElementById('thr-dvw').value = t.dc_volt_warn   ?? 13.5;
+  document.getElementById('thr-dvf').value = t.dc_volt_fault  ?? 14.8;
+  document.getElementById('thr-dpw').value = t.dc_power_warn  ?? 25;
+  document.getElementById('thr-dpf').value = t.dc_power_fault ?? 40;
+}
+async function saveThresholds() {
+  const btn = document.getElementById('btn-save-thr');
+  btn.textContent = 'Sending…'; btn.disabled = true;
+  await fetch('/api/thresholds', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      current_warn:   +document.getElementById('thr-cw').value,
+      current_fault:  +document.getElementById('thr-cf').value,
+      temp_warn:      +document.getElementById('thr-tw').value,
+      temp_fault:     +document.getElementById('thr-tf').value,
+      dc_volt_warn:   +document.getElementById('thr-dvw').value,
+      dc_volt_fault:  +document.getElementById('thr-dvf').value,
+      dc_power_warn:  +document.getElementById('thr-dpw').value,
+      dc_power_fault: +document.getElementById('thr-dpf').value,
+    })
+  });
+  btn.textContent = 'Saved ✓'; btn.style.background = 'var(--ok)';
+  setTimeout(() => {
+    btn.textContent = 'Save & Push to ESP32';
+    btn.style.background = '';
+    btn.disabled = false;
+  }, 1800);
+}
+
+// ── Relay control ─────────────────────────────────────────────────────────────
+async function cutPower() {
+  if (!confirm('Cut charging power?\nThe relay will be opened immediately.')) return;
+  const btn = document.getElementById('btn-cut');
+  btn.disabled = true;
+  await fetch('/api/relay/off', { method: 'POST' });
+  setTimeout(() => { btn.disabled = false; }, 3000);
+}
+
+async function sendReset() {
+  if (!confirm('Restore charging?\nThis sends RESET to the ESP32 and re-closes the relay if sensors are safe.')) return;
+  await fetch('/api/reset', { method: 'POST' });
+}
+
+
+window.addEventListener('resize', () => {
+  [chLiveI, chLiveV, chLiveP, chLiveT, chHistI, chHistV, chHistP, chHistT, chHistH].forEach(ch => ch.resize());
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadThr();
+fetchEvt();
+
+// Overview charts always display a fixed 1-hour axis.
+// Missing minutes are filled with 0, so the time axis stays stable after refresh.
+fetch('/api/history?range=1h')
+  .then(r => r.json())
+  .then(rows => {
+    setLiveWindowFromRows(rows || []);
+    return fetch('/api/latest');
+  })
+  .then(r => r.json())
+  .then(d => { if (d && (d.current_a != null || d.dc_current_a != null || d.timestamp != null)) apply(d); });
+</script>
+</body>
+</html>
